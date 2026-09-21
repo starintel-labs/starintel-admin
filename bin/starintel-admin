@@ -308,7 +308,10 @@ plan_set() {
     | . + ["tenant:"+$plan,"dataset:*"]
     | unique
   ' <<<"$user")
-  user_update "$username" "$(jq -cn --argjson scopes "$scopes" '{scopes:$scopes}')"
+  local result
+  result=$(user_update "$username" "$(jq -cn --argjson scopes "$scopes" '{scopes:$scopes}')")
+  user_revoke_keys "$username"
+  printf '%s\n' "$result"
 }
 
 plan_revoke() {
@@ -328,7 +331,10 @@ plan_revoke() {
       | map(select((startswith("tenant:") or .=="dataset:*")|not))
     ' <<<"$user")
   fi
-  user_update "$username" "$(jq -cn --argjson scopes "$scopes" '{scopes:$scopes}')"
+  local result
+  result=$(user_update "$username" "$(jq -cn --argjson scopes "$scopes" '{scopes:$scopes}')")
+  user_revoke_keys "$username"
+  printf '%s\n' "$result"
 }
 
 document_search() {
