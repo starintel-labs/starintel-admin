@@ -43,17 +43,19 @@ exist. The default model matches the dotfiles image stack:
 
 ## Dataset policy
 
-`dataset public|private|planned` is an operator desired-state registry in
-`$XDG_CONFIG_HOME/starintel-admin/datasets.json`.
+`dataset public|private|planned` writes durable operator desired state in
+`$XDG_CONFIG_HOME/starintel-admin/datasets.json` and immediately replaces the
+server's live policy through `PUT /admin/dataset-policy`.
 
-- **private** is the sane default policy.
-- **public** means intended unrestricted publication/access policy.
+- **private** is the sane default: absent from public and planned runtime sets.
+- **public** enters the explicit public allowlist.
 - **planned** binds a dataset to one tenant/plan ID.
 
-`dataset tenant-map` emits the planned dataset mapping as
-`dataset=tenant,...` for server/infra configuration. This registry does not
-pretend the current server has a native dataset-policy endpoint; deployment can
-consume it explicitly.
+The server policy is intentionally runtime-only. The local registry is the
+durable authority and `dataset apply` replays it after server restart;
+`dataset status` shows the current live generation/state. A failed live apply
+does not discard desired state, so operators can repair connectivity and replay.
+`dataset tenant-map` remains available for infra/environment compatibility.
 
 ## Data-size semantics
 

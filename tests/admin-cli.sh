@@ -11,6 +11,7 @@ export XDG_STATE_HOME="$TMP/state"
 export STARINTEL_ADMIN_TOKEN=test-token
 export STARINTEL_ADMIN_CURL="$TMP/fake-curl"
 export STARINTEL_ADMIN_URL=http://star.test
+export STARINTEL_TEST_POLICY_CAPTURE="$TMP/live-policy.json"
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME"
 
 cat >"$STARINTEL_ADMIN_CURL" <<'SH'
@@ -42,6 +43,17 @@ case "$method $url" in
   "POST http://star.test/auth/credentials/key-a/revoke")
     printf '{"status":"ok","credential":{"id":"key-a","status":"revoked"}}'
     ;;
+  "PUT http://star.test/admin/dataset-policy")
+    printf '%s\n' "$body" >"$STARINTEL_TEST_POLICY_CAPTURE"
+    jq -cn --argjson body "$body"       '$body + {status:"ok",runtime_only:true,generation:1,legacy_public_wildcard:false}'
+    ;;
+  "GET http://star.test/admin/dataset-policy")
+    if [[ -r "$STARINTEL_TEST_POLICY_CAPTURE" ]]; then
+      jq '. + {status:"ok",runtime_only:true,generation:1,legacy_public_wildcard:false}'         "$STARINTEL_TEST_POLICY_CAPTURE"
+    else
+      printf '{"status":"ok","runtime_only":true,"generation":0,"public_datasets":["*"],"planned_datasets":{},"legacy_public_wildcard":true}'
+    fi
+    ;;
   "GET http://star.test/api/v1/documents/search?q=%2A%3A%2A&tenant=old&limit=10000")
     printf '{"hits":[{"document":{"_id":"m1","tenant_id":"old","data":{"text":"hello"}}},{"document":{"_id":"p1","tenant_id":"old","data":{"text":"world"}}}]}'
     ;;
@@ -66,10 +78,13 @@ admin plan revoke alice old | jq -e '.user.scopes | index("tenant:old") == null'
 admin user revoke alice | jq -e '.user.status=="disabled"' >/dev/null
 admin key revoke key-a | jq -e '.credential.status=="revoked"' >/dev/null
 
-admin dataset private case-a | jq -e '.mode=="private"' >/dev/null
-admin dataset public case-b | jq -e '.mode=="public"' >/dev/null
-admin dataset planned case-c pro | jq -e '.mode=="planned" and .tenant_id=="pro"' >/dev/null
+admin dataset private case-a | jq -e '.desired.mode=="private" and .live.runtime_only==true' >/dev/null
+admin dataset public case-b | jq -e '.desired.mode=="public" and (.live.public_datasets|index("case-b")!=null)' >/dev/null
+admin dataset planned case-c pro | jq -e '.desired.mode=="planned" and .desired.tenant_id=="pro" and .live.planned_datasets["case-c"]=="pro"' >/dev/null
 [[ "$(admin dataset tenant-map)" == "case-c=pro" ]]
+admin dataset apply | jq -e '.public_datasets==["case-b"] and .planned_datasets["case-c"]=="pro"' >/dev/null
+admin dataset status | jq -e '.runtime_only==true and .planned_datasets["case-c"]=="pro"' >/dev/null
+jq -e '.public_datasets==["case-b"] and .planned_datasets=={"case-c":"pro"}' "$STARINTEL_TEST_POLICY_CAPTURE" >/dev/null
 
 stats=$(admin stats user alice)
 jq -e '
@@ -89,6 +104,12 @@ jq -e '
 ' <<<"$group_stats" >/dev/null
 
 dashboard=$(admin dashboard json)
-jq -e '.counts.users==1 and .counts.active_credentials==1' <<<"$dashboard" >/dev/null
+jq -e '
+  .counts.users==1
+  and .counts.active_credentials==1
+  and .counts.live_public_datasets==1
+  and .counts.live_planned_datasets==1
+  and .live_dataset_policy.runtime_only==true
+' <<<"$dashboard" >/dev/null
 
 printf 'admin-cli tests: OK\n'

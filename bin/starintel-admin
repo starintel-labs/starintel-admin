@@ -141,21 +141,62 @@ ensure_policy_file() {
     die "invalid dataset policy file: $policy_file"
 }
 
+policy_payload() {
+  ensure_policy_file
+  jq '{
+    public_datasets:
+      [.datasets
+       | to_entries[]
+       | select(.value.mode=="public")
+       | .key]
+      | sort,
+    planned_datasets:
+      ([.datasets
+        | to_entries[]
+        | select(.value.mode=="planned")
+        | {key:.key,value:.value.tenant_id}]
+       | from_entries)
+  }' "$policy_file"
+}
+
+policy_apply() {
+  local payload
+  payload=$(policy_payload)
+  api_request PUT /admin/dataset-policy "$payload"
+}
+
+policy_status() {
+  api_request GET /admin/dataset-policy
+}
+
 policy_update() {
   local dataset=$1
   local mode=$2
   local tenant=${3-}
-  local tmp
+  local tmp desired live
   ensure_policy_file
   tmp=$(mktemp)
-  jq     --arg dataset "$dataset"     --arg mode "$mode"     --arg tenant "$tenant"     --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"     '.datasets[$dataset] = {
+  jq \
+    --arg dataset "$dataset" \
+    --arg mode "$mode" \
+    --arg tenant "$tenant" \
+    --arg updated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '.datasets[$dataset] = {
        mode:$mode,
        tenant_id:(if $tenant=="" then null else $tenant end),
        updated_at:$updated_at
      }' "$policy_file" >"$tmp"
   chmod 600 "$tmp"
   mv "$tmp" "$policy_file"
-  jq --arg dataset "$dataset" '.datasets[$dataset]' "$policy_file"
+
+  desired=$(jq --arg dataset "$dataset" '.datasets[$dataset]' "$policy_file")
+  if ! live=$(policy_apply); then
+    printf '%s: desired dataset policy saved but live apply failed; run "%s dataset apply" after the server is reachable\n' \
+      "$PROGRAM" "$PROGRAM" >&2
+    return 1
+  fi
+  jq -cn --argjson desired "$desired" --argjson live "$live" \
+    '{status:"ok",desired:$desired,live:$live}'
 }
 
 policy_list() {
@@ -375,21 +416,33 @@ stats_tenant() {
 }
 
 dashboard_json() {
-  local users credentials policies health
+  local users credentials policies live_policy health
   users=$(api_request GET /auth/users)
   credentials=$(api_request GET /auth/credentials)
   policies=$(policy_list)
+  if ! live_policy=$(policy_status 2>/dev/null); then
+    live_policy='{"status":"unavailable","runtime_only":true}'
+  fi
   health=$("$STARINTEL_ADMIN_CURL" --silent --show-error --fail-with-body "$STARINTEL_ADMIN_URL/health")
-  jq -cn     --argjson users "$users"     --argjson credentials "$credentials"     --argjson policies "$policies"     --argjson health "$health"     '{
+  jq -cn \
+    --argjson users "$users" \
+    --argjson credentials "$credentials" \
+    --argjson policies "$policies" \
+    --argjson live_policy "$live_policy" \
+    --argjson health "$health" \
+    '{
        health:$health,
        users:$users,
        credentials:$credentials,
        dataset_policies:$policies,
+       live_dataset_policy:$live_policy,
        counts:{
          users:($users|length),
          active_users:([$users[]|select(.status=="active")]|length),
          active_credentials:([$credentials[]|select(.status=="active")]|length),
-         datasets:($policies|keys|length)
+         datasets:($policies|keys|length),
+         live_public_datasets:(($live_policy.public_datasets // [])|length),
+         live_planned_datasets:(($live_policy.planned_datasets // {})|keys|length)
        }
      }'
 }
@@ -450,6 +503,8 @@ dataset policy:
   $PROGRAM dataset private DATASET
   $PROGRAM dataset planned DATASET TENANT
   $PROGRAM dataset tenant-map
+  $PROGRAM dataset apply
+  $PROGRAM dataset status
 
 documents and logical data size:
   $PROGRAM documents tenant TENANT [QUERY] [LIMIT]
@@ -510,6 +565,8 @@ main() {
       policy_update "$3" planned "$4"
       ;;
     dataset:tenant-map) policy_tenant_map ;;
+    dataset:apply) policy_apply ;;
+    dataset:status) policy_status ;;
     documents:tenant)
       [[ $# -ge 3 && $# -le 5 ]] || die "documents tenant requires TENANT [QUERY] [LIMIT]"
       document_search "$3" "${4:-"*:*"}" "${5:-100}"
