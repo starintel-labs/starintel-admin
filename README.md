@@ -76,4 +76,8 @@ The CLI targets the user lifecycle extension `PUT /auth/users/:username` for
 scope/status updates. `user revoke` disables the user and revokes all active or
 disabled credentials owned by that username.
 
+`plan set` and `plan revoke` also revoke credentials owned by that user after
+the persisted scope update. New sessions/API keys must therefore be minted from
+the new tenant/plan scopes; stale credentials cannot retain removed plan access.
+
 Existing credential revoke uses the current stable server endpoint.
