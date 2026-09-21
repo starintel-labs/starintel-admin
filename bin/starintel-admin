@@ -416,21 +416,33 @@ stats_tenant() {
 }
 
 dashboard_json() {
-  local users credentials policies health
+  local users credentials policies live_policy health
   users=$(api_request GET /auth/users)
   credentials=$(api_request GET /auth/credentials)
   policies=$(policy_list)
+  if ! live_policy=$(policy_status 2>/dev/null); then
+    live_policy='{"status":"unavailable","runtime_only":true}'
+  fi
   health=$("$STARINTEL_ADMIN_CURL" --silent --show-error --fail-with-body "$STARINTEL_ADMIN_URL/health")
-  jq -cn     --argjson users "$users"     --argjson credentials "$credentials"     --argjson policies "$policies"     --argjson health "$health"     '{
+  jq -cn \
+    --argjson users "$users" \
+    --argjson credentials "$credentials" \
+    --argjson policies "$policies" \
+    --argjson live_policy "$live_policy" \
+    --argjson health "$health" \
+    '{
        health:$health,
        users:$users,
        credentials:$credentials,
        dataset_policies:$policies,
+       live_dataset_policy:$live_policy,
        counts:{
          users:($users|length),
          active_users:([$users[]|select(.status=="active")]|length),
          active_credentials:([$credentials[]|select(.status=="active")]|length),
-         datasets:($policies|keys|length)
+         datasets:($policies|keys|length),
+         live_public_datasets:(($live_policy.public_datasets // [])|length),
+         live_planned_datasets:(($live_policy.planned_datasets // {})|keys|length)
        }
      }'
 }
