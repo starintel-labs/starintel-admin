@@ -104,6 +104,12 @@ jq -e '
 ' <<<"$group_stats" >/dev/null
 
 dashboard=$(admin dashboard json)
-jq -e '.counts.users==1 and .counts.active_credentials==1' <<<"$dashboard" >/dev/null
+jq -e '
+  .counts.users==1
+  and .counts.active_credentials==1
+  and .counts.live_public_datasets==1
+  and .counts.live_planned_datasets==1
+  and .live_dataset_policy.runtime_only==true
+' <<<"$dashboard" >/dev/null
 
 printf 'admin-cli tests: OK\n'
