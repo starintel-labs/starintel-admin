@@ -42,11 +42,11 @@ case "$method $url" in
   "POST http://star.test/auth/credentials/key-a/revoke")
     printf '{"status":"ok","credential":{"id":"key-a","status":"revoked"}}'
     ;;
-  "GET http://star.test/documents/messages/by-user?user=alice&limit=10000")
-    printf '{"rows":[{"doc":{"_id":"m1","data":{"text":"hello"}}}]}'
+  "GET http://star.test/api/v1/documents/search?q=%2A%3A%2A&tenant=old&limit=10000")
+    printf '{"hits":[{"document":{"_id":"m1","tenant_id":"old","data":{"text":"hello"}}},{"document":{"_id":"p1","tenant_id":"old","data":{"text":"world"}}}]}'
     ;;
-  "GET http://star.test/documents/socialmpost/by-user?user=alice&limit=10000")
-    printf '{"rows":[{"doc":{"_id":"p1","data":{"text":"world"}}}]}'
+  "GET http://star.test/api/v1/documents/search?q=%2A%3A%2A&tenant=pro&limit=10000")
+    printf '{"hits":[{"document":{"_id":"g1","tenant_id":"pro","data":{"text":"group"}}}]}'
     ;;
   *)
     printf 'unexpected request: %s %s\n' "$method" "$url" >&2
@@ -72,7 +72,21 @@ admin dataset planned case-c pro | jq -e '.mode=="planned" and .tenant_id=="pro"
 [[ "$(admin dataset tenant-map)" == "case-c=pro" ]]
 
 stats=$(admin stats user alice)
-jq -e '.document_count==2 and .logical_json_bytes > 0' <<<"$stats" >/dev/null
+jq -e '
+  .kind=="user-accessible"
+  and .tenant_ids==["old"]
+  and .document_count==2
+  and .logical_json_bytes > 0
+  and (.semantics|contains("not creator-owned"))
+' <<<"$stats" >/dev/null
+
+group_stats=$(admin stats group pro)
+jq -e '
+  .kind=="user-group"
+  and .id=="pro"
+  and .document_count==1
+  and (.semantics|contains("tenant/plan group"))
+' <<<"$group_stats" >/dev/null
 
 dashboard=$(admin dashboard json)
 jq -e '.counts.users==1 and .counts.active_credentials==1' <<<"$dashboard" >/dev/null
