@@ -12,7 +12,9 @@ export STARINTEL_ADMIN_TOKEN=test-token
 export STARINTEL_ADMIN_CURL="$TMP/fake-curl"
 export STARINTEL_ADMIN_URL=http://star.test
 export STARINTEL_TEST_POLICY_CAPTURE="$TMP/live-policy.json"
+export STARINTEL_TEST_REVOKE_LOG="$TMP/revoked-credentials.log"
 mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME"
+: >"$STARINTEL_TEST_REVOKE_LOG"
 
 cat >"$STARINTEL_ADMIN_CURL" <<'SH'
 #!/usr/bin/env bash
@@ -41,6 +43,7 @@ case "$method $url" in
     jq -cn --argjson body "$body" '{status:"ok",user:({username:"alice"} + $body)}'
     ;;
   "POST http://star.test/auth/credentials/key-a/revoke")
+    printf '%s\n' "key-a" >>"$STARINTEL_TEST_REVOKE_LOG"
     printf '{"status":"ok","credential":{"id":"key-a","status":"revoked"}}'
     ;;
   "PUT http://star.test/admin/dataset-policy")
@@ -74,7 +77,9 @@ admin() {
 
 admin user list | jq -e '.[0].username=="alice"' >/dev/null
 admin plan set alice pro | jq -e '.user.scopes | index("tenant:pro") != null' >/dev/null
+[[ "$(wc -l <"$STARINTEL_TEST_REVOKE_LOG")" -eq 1 ]]
 admin plan revoke alice old | jq -e '.user.scopes | index("tenant:old") == null' >/dev/null
+[[ "$(wc -l <"$STARINTEL_TEST_REVOKE_LOG")" -eq 2 ]]
 admin user revoke alice | jq -e '.user.status=="disabled"' >/dev/null
 admin key revoke key-a | jq -e '.credential.status=="revoked"' >/dev/null
 
