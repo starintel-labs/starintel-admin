@@ -318,37 +318,55 @@ logical_stats_from_json() {
 
 stats_user() {
   local user=$1
-  local a b
-  a=$(api_request GET "/documents/messages/by-user?user=$(json_escape_uri "$user")&limit=10000")
-  b=$(api_request GET "/documents/socialmpost/by-user?user=$(json_escape_uri "$user")&limit=10000")
+  local record tmp
+  record=$(user_json "$user")
+  tmp=$(mktemp)
+  trap 'rm -f -- "${tmp:-}"' RETURN
+
+  jq -r '
+    .scopes[]
+    | select(startswith("tenant:"))
+    | sub("^tenant:";"")
+  ' <<<"$record" | sort -u |
+  while IFS= read -r tenant; do
+    [[ -n "$tenant" ]] || continue
+    document_search "$tenant" "*:*" 10000 |
+      jq -c --arg tenant "$tenant" '{tenant:$tenant,response:.}' >>"$tmp"
+  done
+
   jq -s --arg user "$user" '
-    def docs:
-      [ .[] |
-        if .rows then .rows[]? | (.doc // .value // empty)
-        elif .hits then .hits[]? | (.doc // .document // .)
-        else empty end ];
-    docs as $docs
+    def response_docs($r):
+      if $r.hits then [$r.hits[]? | (.doc // .document // .)]
+      elif $r.rows then [$r.rows[]? | (.doc // .value // empty)]
+      else [] end;
+    [.[].tenant] as $tenants
+    | [ .[] | response_docs(.response)[] ]
+    | unique_by((._id // .id // tojson))
+    | . as $docs
     | {
-        kind:"user",
+        kind:"user-accessible",
         id:$user,
+        tenant_ids:($tenants|unique),
         document_count:($docs|length),
-        logical_json_bytes:([$docs[] | tojson | length] | add // 0)
+        logical_json_bytes:([$docs[] | tojson | length] | add // 0),
+        semantics:"Deduplicated logical JSON bytes accessible through the account tenant/plan scopes; not creator-owned bytes."
       }
     | . + {logical_mib:(.logical_json_bytes / 1048576)}
-  ' < <(printf '%s\n%s\n' "$a" "$b")
+  ' "$tmp"
+
+  rm -f -- "$tmp"
+  trap - RETURN
 }
 
 stats_group() {
   local group=$1
-  local tenant=${2-}
-  local q result
-  q="data.group:\"$group\""
-  if [[ -n "$tenant" ]]; then
-    result=$(document_search "$tenant" "$q" 10000)
-  else
-    result=$(api_request GET "/api/v1/documents/search?q=$(json_escape_uri "$q")&limit=10000")
-  fi
-  logical_stats_from_json group "$group" <<<"$result"
+  local result
+  result=$(stats_tenant "$group")
+  jq --arg group "$group" '
+    .kind = "user-group"
+    | .id = $group
+    | .semantics = "Logical JSON bytes in the tenant/plan group; not physical CouchDB/S3 usage."
+  ' <<<"$result"
 }
 
 stats_tenant() {
@@ -437,7 +455,7 @@ documents and logical data size:
   $PROGRAM documents tenant TENANT [QUERY] [LIMIT]
   $PROGRAM stats tenant TENANT
   $PROGRAM stats user USER
-  $PROGRAM stats group GROUP [TENANT]
+  $PROGRAM stats group TENANT_OR_PLAN
 
 dashboard / visualization:
   $PROGRAM dashboard json
@@ -505,8 +523,8 @@ main() {
       stats_user "$3"
       ;;
     stats:group)
-      [[ $# -ge 3 && $# -le 4 ]] || die "stats group requires GROUP [TENANT]"
-      stats_group "$3" "${4-}"
+      [[ $# -eq 3 ]] || die "stats group requires TENANT_OR_PLAN"
+      stats_group "$3"
       ;;
     dashboard:json) dashboard_json ;;
     graph:image)

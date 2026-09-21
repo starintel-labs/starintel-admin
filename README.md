@@ -57,9 +57,16 @@ consume it explicitly.
 
 ## Data-size semantics
 
-`stats user`, `stats group`, and `stats tenant` report **logical JSON bytes**
-for returned documents, plus document count and MiB. This is intentionally not
-claimed to be CouchDB/S3 physical disk usage.
+`stats user USER` resolves the authenticated account's `tenant:<id>` plan
+scopes, queries each tenant, deduplicates documents, and reports the **logical
+JSON bytes accessible to that account**. StarIntel does not currently persist a
+creator-principal on intelligence documents, so this is deliberately *not*
+reported as user-owned storage.
+
+`stats group TENANT_OR_PLAN` measures the corresponding tenant/plan user group.
+`stats tenant` exposes the same tenant primitive directly. All three return
+document count, logical JSON bytes, and MiB; none are claimed to be physical
+CouchDB/S3 disk usage.
 
 ## User revoke / plan mutation
 
