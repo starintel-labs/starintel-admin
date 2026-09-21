@@ -118,6 +118,7 @@ image_request() {
   key=$(openrouter_key)
   config=$(mktemp)
   chmod 600 "$config"
+  trap 'rm -f -- "${config:-}"' RETURN
   printf 'header = "Authorization: Bearer %s"\n' "${key//\"/\\\"}" >"$config"
   payload=$(jq -cn     --arg model "$STARINTEL_ADMIN_IMAGE_MODEL"     --arg prompt "$prompt"     '{model:$model,prompt:$prompt,n:1,size:"1536x1024",quality:"high",output_format:"png",background:"auto"}')
   encoded=$(
@@ -125,6 +126,7 @@ image_request() {
       jq -er '.data[0].b64_json'
   )
   rm -f -- "$config"
+  trap - RETURN
   mkdir -p -- "$(dirname -- "$output")"
   printf '%s' "$encoded" | base64 --decode >"$output"
   jq -cn --arg path "$output" --arg model "$STARINTEL_ADMIN_IMAGE_MODEL"     '{status:"ok",image:$path,model:$model}'
@@ -376,7 +378,8 @@ dashboard_json() {
 
 graph_image() {
   local tenant=
-  local output="$STARINTEL_ADMIN_STATE_DIR/graphs/admin-$(date -u +%Y%m%dT%H%M%SZ).png"
+  local output
+  output="$STARINTEL_ADMIN_STATE_DIR/graphs/admin-$(date -u +%Y%m%dT%H%M%SZ).png"
   while (($#)); do
     case "$1" in
       --tenant) tenant=$2; shift 2 ;;
